@@ -109,6 +109,10 @@ pub const CATEGORY_TECH: Symbol = symbol_short!("Tech");
 /// Miscellaneous predictions that don't fit other categories
 pub const CATEGORY_OTHER: Symbol = symbol_short!("Other");
 
+/// Minimum amount (in token base units / stroops) that may be withdrawn
+/// via `withdraw_treasury`. Prevents dust withdrawals.
+pub const MIN_WITHDRAWAL_AMOUNT: i128 = 1;
+
 // ═══════════════════════════════════════════════════════════════════════════
 // PROTOCOL INVARIANTS (for formal verification)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1042,11 +1046,10 @@ pub struct PredifiContract;
 impl PredifiContract {
     // ====== Pure Helper Functions (side-effect free, verifiable) ======
 
-    /// Validate that a category symbol is in the allowed list, falling back to CATEGORY_OTHER if not.
-    /// Validate category symbol against allowed list.
-    /// Returns the category if valid, otherwise returns InvalidData error.
+    /// Validate that a category symbol is in the allowed list.
+    /// Returns the category if valid, otherwise falls back to CATEGORY_OTHER.
     /// PRE: category is a valid Symbol
-    /// POST: returns Ok(category) if category is in the allowed list, else Err(InvalidData)
+    /// POST: returns Ok(category) if category is in the allowed list, else Ok(CATEGORY_OTHER)
     fn validate_category(env: &Env, category: &Symbol) -> Result<Symbol, PredifiError> {
         let mut allowed = Vec::new(env);
         allowed.push_back(CATEGORY_SPORTS);
@@ -1064,7 +1067,7 @@ impl PredifiContract {
                 }
             }
         }
-        Err(PredifiError::InvalidData)
+        Ok(CATEGORY_OTHER)
     }
 
     /// Pure: Check if pool state transition is valid
@@ -1931,7 +1934,7 @@ impl PredifiContract {
     }
 
     /// Returns true if the pool has a properly resolved outcome (not the sentinel value).
-    pub fn is_pool_resolved(&pool: &Pool) -> bool {
+    fn is_pool_resolved(pool: &Pool) -> bool {
         pool.outcome != UNRESOLVED_OUTCOME
     }
 
@@ -2566,7 +2569,7 @@ impl PredifiContract {
                         existing_outcome: i,
                     }
                     .publish(&env);
-                    break;
+                    return Err(PredifiError::ResolutionConflict);
                 }
             }
         }
@@ -4117,7 +4120,7 @@ impl OracleCallback for PredifiContract {
                         existing_outcome: i,
                     }
                     .publish(&env);
-                    break;
+                    return Err(PredifiError::ResolutionConflict);
                 }
             }
         }
@@ -4173,38 +4176,6 @@ impl OracleCallback for PredifiContract {
             }
             .publish(&env);
         }
-
-        Ok(())
-    }
-}
-
-#[contractimpl]
-impl PredifiContract {
-    /// Emergency escape hatch: transfers any token balance held by this contract
-    /// to a destination address. Restricted to the admin role.
-    ///
-    /// Intended for use when the protocol or oracle has failed and funds must be
-    /// rescued. Emits an `EmergencyWithdraw` event for on-chain auditability.
-    pub fn emergency_withdraw(
-        env: Env,
-        admin: Address,
-        token: Address,
-        destination: Address,
-        amount: i128,
-    ) -> Result<(), PredifiError> {
-        admin.require_auth();
-        Self::require_admin_role(&env, &admin, "emergency_withdraw")?;
-
-        let token_client = token::Client::new(&env, &token);
-        token_client.transfer(&env.current_contract_address(), &destination, &amount);
-
-        EmergencyWithdrawEvent {
-            admin,
-            token,
-            destination,
-            amount,
-        }
-        .publish(&env);
 
         Ok(())
     }
