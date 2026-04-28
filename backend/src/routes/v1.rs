@@ -168,8 +168,12 @@ pub async fn ingest_pool_created(
 }
 
 /// Build the version 1 API router.
-pub fn router(config: Config, cache: PriceCache, db: Option<sqlx::PgPool>) -> Router {
-    let state = AppState { config, cache, db };
+pub fn router(config: Config, cache: PriceCache, pool: Option<sqlx::PgPool>) -> Router {
+    let state = AppState {
+        config,
+        cache,
+        pool,
+    };
 
     Router::new()
         .route("/", get(index))
@@ -195,9 +199,9 @@ async fn referrals_handler(
     axum::extract::Path(address): axum::extract::Path<String>,
     State(state): State<AppState>,
 ) -> axum::response::Response {
-    use axum::response::IntoResponse;
-    use axum::http::StatusCode;
     use crate::response::ApiResponse;
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
 
     match state.db {
         Some(pool) => {
@@ -205,10 +209,9 @@ async fn referrals_handler(
                 crate::referrals::get_referrals(axum::extract::Path(address), State(pool)).await;
             (status, body).into_response()
         }
-        None => ApiResponse::<()>::error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "database not configured",
-        )
-        .into_response(),
+        None => {
+            ApiResponse::<()>::error(StatusCode::SERVICE_UNAVAILABLE, "database not configured")
+                .into_response()
+        }
     }
 }
